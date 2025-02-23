@@ -1,4 +1,4 @@
-use super::BigUint;
+use crate::BigUint;
 use num_traits::*;
 
 impl Zero for BigUint {

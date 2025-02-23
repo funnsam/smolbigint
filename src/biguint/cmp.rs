@@ -1,5 +1,5 @@
 use core::cmp::*;
-use super::*;
+use crate::BigUint;
 
 impl PartialEq<u64> for BigUint {
     fn eq(&self, other: &u64) -> bool {

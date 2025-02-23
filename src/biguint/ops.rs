@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 use core::ops::*;
-use super::*;
+use crate::{BigUint, CarryOps};
 
 macro_rules! impl_helpers {
     ($assign_t:ident : $assign_fn:ident , $biop_t:ident : $biop_fn:ident) => {
@@ -33,6 +33,8 @@ macro_rules! impl_helpers {
 impl_helpers!(AddAssign: add_assign, Add: add);
 impl_helpers!(SubAssign: sub_assign, Sub: sub);
 impl_helpers!(MulAssign: mul_assign, Mul: mul);
+impl_helpers!(DivAssign: div_assign, Div: div);
+impl_helpers!(RemAssign: rem_assign, Rem: rem);
 
 impl AddAssign<&Self> for BigUint {
     fn add_assign(&mut self, rhs: &Self) {
@@ -162,9 +164,76 @@ impl MulAssign<&Self> for BigUint {
     }
 }
 
+impl DivAssign<&Self> for BigUint {
+    fn div_assign(&mut self, rhs: &Self) {
+        self.div_assign_rem(rhs);
+    }
+}
+
+impl RemAssign<&Self> for BigUint {
+    fn rem_assign(&mut self, rhs: &Self) {
+        *self = self.div_assign_rem(rhs);
+    }
+}
+
+impl BigUint {
+    pub fn div_assign_rem(&mut self, rhs: &Self) -> Self {
+        if *rhs == 0 {
+            panic!("attempt to divide by 0");
+        }
+
+        if *self < *rhs {
+            return core::mem::replace(self, BigUint::from(0));
+        }
+
+        match (&mut *self, rhs) {
+            (BigUint::Small(a), BigUint::Small(b)) => {
+                let rem = *a % *b;
+                *a /= *b;
+                BigUint::from(rem)
+            },
+            (BigUint::Small(a), BigUint::Big(b)) => {
+                let rem = *a % b[0];
+                *a /= b[0];
+                BigUint::from(rem)
+            },
+            (BigUint::Big(a), BigUint::Small(b)) => {
+                let mut rem = BigUint::from(0);
+
+                for a in a.iter_mut().rev() {
+                    let this_rem = (rem.clone() + *a) % *b;
+                    let this_div = (rem.clone() + *a) / *b;
+                    *a = this_div.try_into().unwrap();
+
+                    rem = this_rem;
+                    rem.left_shift_places(1);
+                    rem.trim();
+                }
+
+                BigUint::from(rem)
+            },
+            (BigUint::Big(a), BigUint::Big(_)) => {
+                let mut rem = BigUint::from(0);
+
+                for a in a.iter_mut().rev() {
+                    let this_rem = (rem.clone() + *a) % rhs;
+                    let this_div = (rem.clone() + *a) / rhs;
+                    *a = this_div.try_into().unwrap();
+
+                    rem = this_rem;
+                    rem.left_shift_places(1);
+                    rem.trim();
+                }
+
+                BigUint::from(rem)
+            },
+        }
+    }
+}
+
 #[test]
 fn test_add_assign() {
-    let mut a = BigUint::Small(u64::MAX);
+    let mut a = BigUint::from(u64::MAX);
     a += 1;
     assert_eq!(a, BigUint::Big(vec![0, 1]));
 
@@ -198,4 +267,48 @@ fn test_sub_assign() {
 
     a -= BigUint::Big(vec![1, 0, 0]);
     assert_eq!(a, 0);
+}
+
+#[test]
+fn test_mul_assign() {
+    let mut a = BigUint::from(1);
+    a *= 4;
+    assert_eq!(a, 4);
+
+    a *= u64::MAX / 4 + 1;
+    assert_eq!(a, BigUint::Big(vec![0, 1]));
+
+    a *= 4;
+    assert_eq!(a, BigUint::Big(vec![0, 4]));
+
+    a *= u64::MAX / 4 + 1;
+    assert_eq!(a, BigUint::Big(vec![0, 0, 1]));
+
+    a *= BigUint::Big(vec![0, 4, 1]);
+    assert_eq!(a, BigUint::Big(vec![0, 0, 0, 4, 1]));
+
+    a *= BigUint::Big(vec![0, u64::MAX / 4 + 1]);
+    assert_eq!(a, BigUint::Big(vec![0, 0, 0, 0, 0, u64::MAX / 4 + 2]));
+}
+
+#[test]
+fn test_div_assign() {
+    let mut a = BigUint::Big(vec![0, 0, 0, 0, 0, u64::MAX / 4 + 2]);
+    a /= BigUint::Big(vec![0, u64::MAX / 4 + 1]);
+    assert_eq!(a, BigUint::Big(vec![0, 0, 0, 4, 1]));
+
+    a /= BigUint::Big(vec![0, 4, 1]);
+    assert_eq!(a, BigUint::Big(vec![0, 0, 1]));
+
+    a /= u64::MAX / 4 + 1;
+    assert_eq!(a, BigUint::Big(vec![0, 4]));
+
+    a /= 4;
+    assert_eq!(a, BigUint::Big(vec![0, 1]));
+
+    a /= u64::MAX / 4 + 1;
+    assert_eq!(a, 4);
+
+    a /= 4;
+    assert_eq!(a, 1);
 }
